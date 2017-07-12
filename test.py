@@ -46,25 +46,36 @@ class Flow:
     # == Size predictor
     def size_class(self):
         if self._size_class == None:
-           self._size_class = 2 if random() > 1.0 else 1
+           self._size_class = 2 if random() > .70 else 1
         
         return self._size_class
 
     # == tuple matching
     def _matchTCP(self, parser):
+        """
+        Returns a match for a TCP flow
+        """
         match = parser.OFPMatch(in_port=self.in_port, eth_type=0x0800, ipv4_src=self.src, ipv4_dst=self.dst, ip_proto=6, tcp_src=self.sport, tcp_dst=self.dport)
         return match
 
     def _matchUDP(self, parser):
+        """
+        Returns a match for a UDP flow
+        """
         match = parser.OFPMatch(in_port=self.in_port, eth_type=0x0800, ipv4_src=self.src, ipv4_dst=self.dst, ip_proto=17, udp_src=self.sport, udp_dst=self.dport)
         return match
 
     def _matchICMP(self, parser):
-####        print "Install ICMP!"
+        """
+        Returns a match for an ICMP flow
+        """
         match = parser.OFPMatch(in_port=self.in_port, eth_type=0x0800, ipv4_src=self.src, ipv4_dst=self.dst, ip_proto=1)
         return match
 
     def match(self, parser):
+        """
+        Returns an OpenFlow match for the flow
+        """
         # TCP?
         if self.proto == 6:
            return self._matchTCP(parser)
@@ -97,15 +108,39 @@ class ExampleSwitch13(app_manager.RyuApp):
         # initialize mac address table.
         self.mac_to_port = {}
        
-        # == flows ==================================
+        # == flows ===========================================================
+        # Topology graph
         self.G = nx.Graph()
-        self.last_update = time()
-        self.S = dict()
-        self.thresholds = [None, 0.0, 0.0]
+
+        # Last time the threshold has been recomputed
+        self.last_update = 0.0
+
+        # Interval between two threshold recomputations (in seconds, float)
+        self.T = 1.0
+
+        # Statistics on the number of observations for flow classes
+	#     observations_classes[0] = total number of observations
+        #     observations_classes[i>0] = number of observations for class i
         self.observations_classes = [0, 0, 0]
-        self.c = .7
+
+	# Statistics of the number of accepted and rejected demands per switch
+        #     S[<switch>] = (accepted/rejected)
+        self.S = dict()
+
+        # Acceptance probability per class
+        #     thresholds[0] = None
+        #     thresholds[<class id>] = probability
+        self.thresholds = [None, 0.0, 0.0]
+
+        # Average load on the controller (c \in \left[0; 1\right])
+        self.c = 0.8
+
+        # Current alpha value
         self.alpha = 1.0
-        # ===========================================
+
+        # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
+        self.epsilon = 0.25
+        # ====================================================================
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -133,11 +168,15 @@ class ExampleSwitch13(app_manager.RyuApp):
     def _get_flow_info(self, pkt, in_port):
         """
         Get flow information from packet
+
+	Returns the Flow corresponding to packet pkt. In case the protocol is
+        not supported a None is returned.
         """
+        flow = None
+
         # Ethernet frame
         eth_pkt = pkt.get_protocol(ethernet.ethernet)
         ethertype = eth_pkt.ethertype
-        flow = None
 
         # IPv4?
         if ethertype == ether_types.ETH_TYPE_IP:
@@ -155,6 +194,15 @@ class ExampleSwitch13(app_manager.RyuApp):
               udp_pkt = pkt.get_protocol(udp.udp)
               flow.sport = udp_pkt.src_port
               flow.dport = udp_pkt.dst_port
+
+           # ICMP?
+           elif ip_pkt.proto == inet.IPPROTO_ICMP:
+              pass
+
+           # something else: not supported
+           else:
+              flow = None
+
         return flow
 
     def proba_size_class(self, i):
@@ -175,19 +223,27 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.observations_classes[0] = self.observations_classes[0] + 1
    
     def update_statistics(self, flow):
+        """
+        Update the statistics database according
+        """
         size_class = flow.size_class()
-
         self.increment_observation_size_class(size_class)     
-###        print "Stats: ", [self.proba_size_class(i) for i in range(1,3)]
 
     def accept(self, flow):
-        return (random() < self.thresholds[flow.size_class()])
+        """
+	Define wether or not we should accept the flow for optimal routing
+        """
+        return True
+##        return (random() < self.thresholds[flow.size_class()])
 
     def STOCHAPP(self):
+       """
+       Recomputation of the threshold when needed
+       """
        now = time()
 
        # no need to recompute
-       if now < self.last_update + 1.0:
+       if now < self.last_update + self.T:
           return
 
        # compute Y
@@ -213,16 +269,12 @@ class ExampleSwitch13(app_manager.RyuApp):
        Y = all_accepted / all_observed
 
        # compute alpha
-       epsilon = 0.25
-
-       self.alpha = max( 0.0, min(2.0, (self.alpha + epsilon  * (self.c - Y))))
+       _nb_classes = len(self.thresholds) - 1
+       self.alpha = max(0.0, min(_nb_classes, (self.alpha + self.epsilon  * (self.c - Y))))
 
        # Determine the threshold class
        _threshold = int(self.alpha + 1.0)
        assert(_threshold < len(self.thresholds))
-
-#       _threshold = max(0, min(len(self.thresholds), int(self.alpha)))
-
 
        # Always accept most important classes OK
        for i in range(1, _threshold):
@@ -233,13 +285,9 @@ class ExampleSwitch13(app_manager.RyuApp):
            self.thresholds[i] = 0.0
 
        # Probabilistic accept threshold class
-       if _threshold < len(self.thresholds):
-          self.thresholds[_threshold] = self.alpha - int(self.alpha)
+       self.thresholds[_threshold] = self.alpha - int(self.alpha)
 
-       print "c:",self.c, "epsilon", epsilon, "Y:", Y, "alpha:", self.alpha, "P_i:", [self.proba_size_class(i) for i in range(1, len(self.thresholds))], "u(alpha):",self.thresholds[1:]
-
-       # compute threshold
-       
+       print "c:",self.c, "epsilon", self.epsilon, "Y:", Y, "alpha:", self.alpha, "P_i:", [self.proba_size_class(i) for i in range(1, len(self.thresholds))], "u(alpha):",self.thresholds[1:]
 
        # reset everything
 ##############       self.observations_classes = [0, 0, 0]
