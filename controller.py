@@ -30,7 +30,6 @@ from ryu.lib.packet import udp
 import networkx as nx
 from random import random
 from time import time
-# ====
 
 class Flow:
     def __init__(self, src=None, dst=None, proto=None, in_port=None):
@@ -40,15 +39,14 @@ class Flow:
         self.sport = None
         self.dport = None
         self.in_port = in_port
-        self._size_class = None
-        self.size_class()
 
     # == Size predictor
     def size_class(self):
-        if self._size_class == None:
-           self._size_class = 2 if random() > .70 else 1
-        
-        return self._size_class
+        assert(self.is_best_effort())
+        return (self.dport - 10010)
+
+    def is_best_effort(self):
+        return (self.proto == 6 and (self.dport >= 10011 and self.dport <= 10013))
 
     # == tuple matching
     def _matchTCP(self, parser):
@@ -118,10 +116,14 @@ class ExampleSwitch13(app_manager.RyuApp):
         # Interval between two threshold recomputations (in seconds, float)
         self.T = 1.0
 
+        # Number of flow classes
+        self.NB_CLASSES = 3
         # Statistics on the number of observations for flow classes
 	#     observations_classes[0] = total number of observations
         #     observations_classes[i>0] = number of observations for class i
-        self.observations_classes = [0, 0, 0]
+        self.observations_classes = list()#[0, 0, 0, 0]
+        for i in range(0, self.NB_CLASSES + 1):
+            self.observations_classes.append(0)
 
 	# Statistics of the number of accepted and rejected demands per switch
         #     S[<switch>] = (accepted/rejected)
@@ -130,7 +132,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         # Acceptance probability per class
         #     thresholds[0] = None
         #     thresholds[<class id>] = probability
-        self.thresholds = [None, 0.0, 0.0]
+        self.thresholds = list()
+        self.thresholds.append(None)
+        for i in range(1, self.NB_CLASSES + 1):
+            self.thresholds.append(0.0)
 
         # Average load on the controller (c \in \left[0; 1\right])
         self.c = 0.8
@@ -141,6 +146,12 @@ class ExampleSwitch13(app_manager.RyuApp):
         # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
         self.epsilon = 0.25
         # ====================================================================
+        self.mac_to_port.setdefault(8796752236495, {})
+        self.mac_to_port.setdefault(8796750974788, {})
+        self.mac_to_port[8796752236495]["08:00:27:69:cf:75"] = 2
+        self.mac_to_port[8796750974788]["08:00:27:a5:30:72"] = 2
+#        self.discovered = nx.MultiDiGraph
+        # ==============================
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -233,7 +244,8 @@ class ExampleSwitch13(app_manager.RyuApp):
         """
 	Define wether or not we should accept the flow for optimal routing
         """
-        return True
+        return random() < .50
+##        return True
 ##        return (random() < self.thresholds[flow.size_class()])
 
     def STOCHAPP(self):
@@ -316,9 +328,9 @@ class ExampleSwitch13(app_manager.RyuApp):
 ###        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.
-        self.mac_to_port[dpid][src] = in_port
-
-###        print "MAC", src, "learned on ", in_port
+        if src not in self.mac_to_port[dpid]:
+            self.mac_to_port[dpid][src] = in_port
+            print "MAC", src, "learned on ", dpid, " - " ,in_port
 
         # == Topology discovery ==============================================
         # add the switch
@@ -341,29 +353,29 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.G.add_edge(src, vdpid)
 
         # == Flow analysis ===================================================
-
         # extract flow info
         flow = self._get_flow_info(pkt, in_port)
 
-        if flow:
-           (a,r) = self.S.setdefault(vdpid, (0,0))
-           # worth installing?
+        optimize_flow = True    # Shall we optimize the flow?
 
+        # determine if a best effort flow can be optimized
+        if flow and flow.is_best_effort():
+           (a,r) = self.S.setdefault(vdpid, (0,0))
+
+           # worth installing?
            if self.accept(flow):
-####              print "Worth installing flow"
+              optimize_flow = True
               a = a + 1
            else:
-###              print "Not worth installing flow"
+              optimize_flow = False
               r = r + 1
 
            # keep track of statistics for the flow
            self.update_statistics(flow)
            self.S[vdpid] = (a,r)
 
-###           print "\t", flow
-
-        # recompute thresholds
-        self.STOCHAPP()
+           # recompute thresholds
+           self.STOCHAPP()
 
         # == Output port =====================================================
 
@@ -372,6 +384,7 @@ class ExampleSwitch13(app_manager.RyuApp):
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
         else:
+            print "DST?", dst, "(", flow
             out_port = ofproto.OFPP_FLOOD
 
         # construct action list.
@@ -390,3 +403,4 @@ class ExampleSwitch13(app_manager.RyuApp):
                                   in_port=in_port, actions=actions,
                                   data=msg.data)
         datapath.send_msg(out)
+
