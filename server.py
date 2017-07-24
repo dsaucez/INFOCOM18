@@ -49,8 +49,10 @@ class MultiprocessWorker(multiprocessing.Process):
 				client_socket.close()
 
 			except Queue.Empty:
+                                print "WHAT1?"
 				pass
                         except Exception as e:
+                                print "WHAT2?"
                                 pass
 
 class MyTCPHandler(SocketServer.BaseRequestHandler):
@@ -81,7 +83,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 if __name__ == "__main__":
 
 	#Mainprocess
-	address =  ('localhost', int(sys.argv[1]))
+	address =  ('0.0.0.0', int(sys.argv[1]))
 	server = SocketServer.TCPServer(address, MyTCPHandler)
 	socket_queue = multiprocessing.Queue()
 
