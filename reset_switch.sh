@@ -2,7 +2,7 @@ echo "Prepare switch:"
 echo "==============="
 sudo  service  openvswitch-switch restart
 sudo ovs-ofctl -O OpenFlow13 dump-flows br-int
-for i in "enp0s8" "enp0s9" "enp0s10" "enp0s16"
+for i in "enp0s8" "enp0s9" "enp0s10" "enp0s16" "enp0s17" 
 do
   echo ""
   echo "Setup $i:"

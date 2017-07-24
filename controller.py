@@ -28,8 +28,10 @@ from ryu.lib.packet import udp
 
 # ====
 import networkx as nx
+from random import seed
 from random import random
 from time import time
+import os
 
 class Flow:
     def __init__(self, src=None, dst=None, proto=None, in_port=None):
@@ -138,20 +140,38 @@ class ExampleSwitch13(app_manager.RyuApp):
             self.thresholds.append(0.0)
 
         # Average load on the controller (c \in \left[0; 1\right])
-        self.c = 0.8
+        self.c = 0.5
+        if "ryu_c" in os.environ:
+           self.c = float( os.environ["ryu_c"])
+        self.random=False
+        if "ryu_random" in os.environ:
+           self.random = bool( int(os.environ["ryu_random"]))
+        self.seed = 0
+        if "ryu_XP" in os.environ:
+           self.seed = int(os.environ["ryu_XP"])
+        seed(int(self.seed))
 
         # Current alpha value
         self.alpha = 1.0
 
         # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
         self.epsilon = 0.25
+
+        # History of flow decisions
+        self.flows = dict()
         # ====================================================================
+        # OVS1
         self.mac_to_port.setdefault(8796752236495, {})
+        self.mac_to_port[8796752236495]["08:00:27:69:cf:75"] = 2 # gen2
+        self.mac_to_port[8796752236495]["08:00:27:f3:c7:2e"] = 2 # hadoop4
+        self.mac_to_port[8796752236495]["08:00:27:04:5c:cd"] = 2 # hadoop5
+	# OVS2
         self.mac_to_port.setdefault(8796750974788, {})
-        self.mac_to_port[8796752236495]["08:00:27:69:cf:75"] = 2
-        self.mac_to_port[8796750974788]["08:00:27:a5:30:72"] = 2
-#        self.discovered = nx.MultiDiGraph
+        self.mac_to_port[8796750974788]["08:00:27:a5:30:72"] = 2 # gen1
+        self.mac_to_port[8796750974788]["08:00:27:c2:f9:9a"] = 2 # hadoop1
+        self.mac_to_port[8796750974788]["08:00:27:45:16:ee"] = 2 # Hadoop2
         # ==============================
+        print "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -244,9 +264,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         """
 	Define wether or not we should accept the flow for optimal routing
         """
-        return random() < .50
-##        return True
-##        return (random() < self.thresholds[flow.size_class()])
+        if self.random:
+            return (random() < self.c)
+        else:
+            return (random() < self.thresholds[flow.size_class()])
 
     def STOCHAPP(self):
        """
@@ -322,6 +343,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         dst = eth_pkt.dst
         src = eth_pkt.src
 
+        # dirty hack
+        if dst == "08:00:27:31:ae:1e":
+            return
+
         # get the received port number from packet_in message.
         in_port = msg.match['in_port']
 
@@ -383,8 +408,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         # decide which port to output the packet, otherwise FLOOD.
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
+            if out_port == 2 and flow and flow.is_best_effort() and optimize_flow:
+               out_port = 1
         else:
-            print "DST?", dst, "(", flow
+            print "PAS ICI", dst
             out_port = ofproto.OFPP_FLOOD
 
         # construct action list.
@@ -393,7 +420,6 @@ class ExampleSwitch13(app_manager.RyuApp):
         # install a flow to avoid packet_in next time.
         if out_port != ofproto.OFPP_FLOOD:
             if flow:
-###                print "\tInstall IPv4 flow:", flow
                 match = flow.match(parser)
                 self.add_flow(datapath, 42, match, actions)
 
@@ -402,5 +428,10 @@ class ExampleSwitch13(app_manager.RyuApp):
                                   buffer_id=ofproto.OFP_NO_BUFFER,
                                   in_port=in_port, actions=actions,
                                   data=msg.data)
+#        if flow:
+#            if flow in self.flows:
+#                return
+#            else:
+#                self.flows[flow] = out_port
         datapath.send_msg(out)
 
