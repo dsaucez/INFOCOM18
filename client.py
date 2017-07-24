@@ -18,7 +18,6 @@ def build_classes(avg, nb_classes):
         limits.append(-logn(e, (100.0-c)/100.0)*avg)
     return limits
 
-
 def what_class(v):
     curr_class = len(limits)+1
     for l in limits:
@@ -56,17 +55,22 @@ def f(port, size):
 
     return True
 
+_seed=int(sys.argv[1])
+np.random.seed(_seed)
 
-
-avg = 10*1024
+avg = 10*1024*1024
 nb_classes = 3
 
 limits = build_classes(avg, nb_classes)
 
+# flow classes:   0%, 90%, 95% 
+# total traffic: 58%, 16%, 26%
+limits = [24.0*1024*1024, 32*1024*1024]
+print "seed:", _seed
 print limits
 
-pool = Pool(processes=10)
-rate = 10
+pool = Pool(processes=100)
+rate = 3
 
 def chunks(total):
     BUFF_SIZE = 1024
