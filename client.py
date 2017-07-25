@@ -1,4 +1,4 @@
-from multiprocessing import Pool, TimeoutError
+from multiprocessing import Pool
 import time
 import os
 
@@ -7,37 +7,18 @@ import sys
 
 import numpy as np
 
-from numpy.lib.scimath import logn
-from math import e
-
-# =======================
-def build_classes(avg, nb_classes):
-    limits = list()
-    step = 100/nb_classes
-    for c in range(step,100/nb_classes*nb_classes, step):
-        limits.append(-logn(e, (100.0-c)/100.0)*avg)
-    return limits
-
-def what_class(v):
-    curr_class = len(limits)+1
-    for l in limits:
-        if v < l:
-            break
-        else:
-            curr_class = curr_class - 1
-    return curr_class
 
 # ===================================
 
-def f(port, size):
+def send_flow(sport, size, s_class):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-    s_class = what_class(size)
-    port = port + s_class
+    dport = 10010
     BUFSIZE = 1024
 
     try:
-        server = ("Gen2", port)
+        server = ("Gen2", dport)
+        sock.bind(("", sport))
         sock.connect(server)
         start = time.time()
         remaining = size
@@ -58,16 +39,9 @@ def f(port, size):
 _seed=int(sys.argv[1])
 np.random.seed(_seed)
 
-avg = 10*1024*1024
 nb_classes = 3
 
-limits = build_classes(avg, nb_classes)
-
-# flow classes:   0%, 90%, 95% 
-# total traffic: 58%, 16%, 26%
-limits = [24.0*1024*1024, 32*1024*1024]
 print "seed:", _seed
-print limits
 
 pool = Pool(processes=100)
 rate = 3
@@ -79,11 +53,15 @@ def chunks(total):
         print c
         total = total - c
 
-i = 0
-while True:
-    i = i + 1
-    s_size = int(np.random.exponential(avg))
-    s_time = np.random.poisson(int(1.0/rate*1000))
 
-    res = pool.apply_async(f, (10010, s_size,))
-    time.sleep(s_time/1000.0)
+with open("flow.dat") as f:
+    for line in f:
+        line = line.strip()
+        (sport, size_class, size) = line.split()
+        sport = int(sport)
+        size_class = int(size_class)
+        size = int (size)
+        res = pool.apply_async(send_flow, (sport, size, size_class,))
+
+        s_time = np.random.poisson(int(1.0/rate*1000))
+        time.sleep(s_time/1000.0)
