@@ -13,10 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+###### monitoring taken from https://github.com/muzixing/ryu/blob/master/ryu/app/simple_monitor.py
+
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
+from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
@@ -26,8 +30,10 @@ from ryu.lib.packet import in_proto as inet
 from ryu.lib.packet import tcp
 from ryu.lib.packet import udp
 
+
+from operator import attrgetter
+
 # ====
-import networkx as nx
 from random import seed
 from random import random
 from time import time
@@ -109,9 +115,6 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.mac_to_port = {}
        
         # == flows ===========================================================
-        # Topology graph
-        self.G = nx.Graph()
-
         # Last time the threshold has been recomputed
         self.last_update = 0.0
 
@@ -152,24 +155,43 @@ class ExampleSwitch13(app_manager.RyuApp):
         seed(int(self.seed))
 
         # Current alpha value
-        self.alpha = 1.0
+        self.alpha = 1.5
 
         # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
-        self.epsilon = 0.25
+        self.epsilon = 0.01
 
         # History of flow decisions
         self.flows = dict()
+        # Monitoring
+        self.sleep = 5
+        self.datapaths = {}
+        self.port_stats = {}
+        self.port_speed = {}
+        self.monitor_thread = hub.spawn(self._monitor)
+
+
         # ====================================================================
         # OVS1
         self.mac_to_port.setdefault(8796752236495, {})
+        # local
+        self.mac_to_port[8796752236495]["08:00:27:a5:30:72"] = 3 # gen1
+        self.mac_to_port[8796752236495]["08:00:27:c2:f9:9a"] = 4 # hadoop1
+        self.mac_to_port[8796752236495]["08:00:27:45:16:ee"] = 5 # hadoop2
+
+        # remote
         self.mac_to_port[8796752236495]["08:00:27:69:cf:75"] = 2 # gen2
         self.mac_to_port[8796752236495]["08:00:27:f3:c7:2e"] = 2 # hadoop4
         self.mac_to_port[8796752236495]["08:00:27:04:5c:cd"] = 2 # hadoop5
 	# OVS2
         self.mac_to_port.setdefault(8796750974788, {})
+        # local
+        self.mac_to_port[8796750974788]["08:00:27:69:cf:75"] = 3 # gen2
+        self.mac_to_port[8796750974788]["08:00:27:f3:c7:2e"] = 4 # hadoop4
+        self.mac_to_port[8796750974788]["08:00:27:04:5c:cd"] = 5 # hadoop5
+        # remote
         self.mac_to_port[8796750974788]["08:00:27:a5:30:72"] = 2 # gen1
         self.mac_to_port[8796750974788]["08:00:27:c2:f9:9a"] = 2 # hadoop1
-        self.mac_to_port[8796750974788]["08:00:27:45:16:ee"] = 2 # Hadoop2
+        self.mac_to_port[8796750974788]["08:00:27:45:16:ee"] = 2 # hadoop2
         # ==============================
         print "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random
 
@@ -323,8 +345,94 @@ class ExampleSwitch13(app_manager.RyuApp):
        print "c:",self.c, "epsilon", self.epsilon, "Y:", Y, "alpha:", self.alpha, "P_i:", [self.proba_size_class(i) for i in range(1, len(self.thresholds))], "u(alpha):",self.thresholds[1:]
 
        # reset everything
-##############       self.observations_classes = [0, 0, 0]
        self.last_update = time()
+# ========== monitoring ==
+    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
+    def _state_change_handler(self, ev):
+        """
+            Record datapath's info
+        """
+        datapath = ev.datapath
+        if ev.state == MAIN_DISPATCHER:
+            if not datapath.id in self.datapaths:
+                self.logger.debug('register datapath: %d', datapath.id)
+                self.datapaths[datapath.id] = datapath
+                self.port_speed.setdefault(datapath.id, {})
+        elif ev.state == DEAD_DISPATCHER:
+            if datapath.id in self.datapaths:
+                self.logger.debug('unregister datapath: %d', datapath.id)
+                del self.datapaths[datapath.id]
+
+    def _monitor(self):
+        while True:
+            for dp in self.datapaths.values():
+                self._request_stats(dp)
+            hub.sleep(self.sleep)
+
+
+    def _request_stats(self, datapath):
+        self.logger.debug('send stats request: %016x', datapath.id)
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
+        datapath.send_msg(req)
+
+    def _get_speed(self, now, pre, period):
+        if period:
+            return (now - pre) / (period)
+        else:
+            return 0
+
+    def _get_time(self, sec, nsec):
+        return sec + nsec / (10 ** 9)
+
+    def _get_period(self, n_sec, n_nsec, p_sec, p_nsec):
+        return self._get_time(n_sec, n_nsec) - self._get_time(p_sec, p_nsec)
+
+    def _save_stats(self, _dict, key, value, length):
+        if key not in _dict:
+            _dict[key] = []
+        _dict[key].append(value)
+
+        if len(_dict[key]) > length:
+            _dict[key].pop(0)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def _port_stats_reply_handler(self, ev):
+        state_len = 3
+        body = ev.msg.body
+    
+        for stat in sorted(body, key=attrgetter('port_no')):
+            if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
+                key = (ev.msg.datapath.id, stat.port_no)
+                value = (
+                    stat.tx_bytes, stat.rx_bytes, stat.rx_errors,
+                    stat.duration_sec, stat.duration_nsec)
+    
+                self._save_stats(self.port_stats, key, value, state_len)
+    
+                # Get port speed.
+                pre = 0
+                period = self.sleep
+                tmp = self.port_stats[key]
+                if len(tmp) > 1:
+                    pre = tmp[-2][0] + tmp[-2][1]
+                    period = self._get_period(
+                        tmp[-1][3], tmp[-1][4],
+                        tmp[-2][3], tmp[-2][4])
+    
+                speed = self._get_speed(
+                    self.port_stats[key][-1][0]+self.port_stats[key][-1][1],
+                    pre, period)
+    
+#                self._save_stats(self.port_speed, key, speed, state_len)
+#                print "speed of ", key, ":",speed
+                self.port_speed[ev.msg.datapath.id][stat.port_no] = speed 
+        print self.port_speed
+
+# ========================
+
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -343,8 +451,9 @@ class ExampleSwitch13(app_manager.RyuApp):
         dst = eth_pkt.dst
         src = eth_pkt.src
 
-        # dirty hack
+        # hadoop3 should never be seen!
         if dst == "08:00:27:31:ae:1e":
+            assert(False)
             return
 
         # get the received port number from packet_in message.
@@ -356,33 +465,21 @@ class ExampleSwitch13(app_manager.RyuApp):
         if src not in self.mac_to_port[dpid]:
             self.mac_to_port[dpid][src] = in_port
             print "MAC", src, "learned on ", dpid, " - " ,in_port
-
-        # == Topology discovery ==============================================
-        # add the switch
-        if dpid not in self.G.nodes():
-            self.G.add_node(dpid)
-
-        # add the port
-        vdpid = "%d:%d" % (dpid, in_port)
-        if vdpid not in self.G.nodes():
-            # add the port to the topology
-            self.G.add_node(vdpid)
-            # connect the port to its switch
-            self.G.add_edge(vdpid, dpid)
-       
-        # add the host (i.e., MAC)
-        if src not in self.G.nodes():
-            self.G.add_node(src)
-
-        # connect host to the port
-        self.G.add_edge(src, vdpid)
+            assert(False)
 
         # == Flow analysis ===================================================
         # extract flow info
         flow = self._get_flow_info(pkt, in_port)
+        if flow in self.flows:
+           if self.flows[flow] >= (time() - 3.0):
+               print "ignore burst of packet_in for one flow"
+               return
+
+           self.flows[flow] = time()
 
         optimize_flow = True    # Shall we optimize the flow?
 
+        vdpid = dpid
         # determine if a best effort flow can be optimized
         if flow and flow.is_best_effort():
            (a,r) = self.S.setdefault(vdpid, (0,0))
@@ -395,12 +492,14 @@ class ExampleSwitch13(app_manager.RyuApp):
               optimize_flow = False
               r = r + 1
 
-           # keep track of statistics for the flow
-           self.update_statistics(flow)
-           self.S[vdpid] = (a,r)
+           # STOCHAPP
+           if not self.random:
+              # keep track of statistics for the flow
+              self.update_statistics(flow)
+              self.S[vdpid] = (a,r)
 
-           # recompute thresholds
-           self.STOCHAPP()
+              # recompute thresholds
+              self.STOCHAPP()
 
         # == Output port =====================================================
 
@@ -408,11 +507,43 @@ class ExampleSwitch13(app_manager.RyuApp):
         # decide which port to output the packet, otherwise FLOOD.
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
-            if out_port == 2 and flow and flow.is_best_effort() and optimize_flow:
-               out_port = 1
+
+            if out_port == 2:
+                print dpid, "optimize flow ", flow, ": ", optimize_flow
+
+                # force big best effort flows on 1
+                if flow and flow.is_best_effort() and optimize_flow:
+                    out_port = 1
+                    print dpid, "force ", flow, " on 1", out_port
+                # load balance between 1 and 2 for other traffic
+                else:
+                    # load balance flows on link 1 and link 2
+                    # quick dirty hack
+
+                    # get the current bw of the link
+                    speed1 = 0.0
+                    speed2 = 0.0
+                    if dpid in self.port_speed:
+                        if 1 in self.port_speed[dpid]:
+                            speed1 = float(self.port_speed[dpid][1])
+                        if 2 in self.port_speed[dpid]:
+                            speed2 = float(self.port_speed[dpid][2])
+
+                    # load preferably the least used link
+                    if speed1 == 0.0 and speed2 == 0.0:
+                       fraction = 0.5
+                    else:
+                      fraction = 1.0 - (speed1 / (speed1 + speed2))
+                    fraction = max(0.1, min(fraction, 0.9))
+                    if random() < fraction:
+                        out_port = 1
+                    else:
+                        out_port = 2
+                    print dpid, "load balance ", flow, " on ", out_port, " (",fraction,")"
         else:
             print "PAS ICI", dst
             out_port = ofproto.OFPP_FLOOD
+            return 
 
         # construct action list.
         actions = [parser.OFPActionOutput(out_port)]
@@ -428,10 +559,5 @@ class ExampleSwitch13(app_manager.RyuApp):
                                   buffer_id=ofproto.OFP_NO_BUFFER,
                                   in_port=in_port, actions=actions,
                                   data=msg.data)
-#        if flow:
-#            if flow in self.flows:
-#                return
-#            else:
-#                self.flows[flow] = out_port
         datapath.send_msg(out)
 
