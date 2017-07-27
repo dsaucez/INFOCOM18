@@ -40,21 +40,23 @@ from time import time
 import os
 
 class Flow:
-    def __init__(self, src=None, dst=None, proto=None, in_port=None):
+    def __init__(self, src=None, dst=None, proto=None, in_port=None, predictor=None):
         self.src = src
         self.dst = dst
         self.proto = proto
         self.sport = None
         self.dport = None
+        self.predictor = predictor
         self.in_port = in_port
 
     # == Size predictor
     def size_class(self):
         assert(self.is_best_effort())
-        return (self.dport - 10010)
+        assert(self.sport in self.predictor)
+        return self.predictor[self.sport]
 
     def is_best_effort(self):
-        return (self.proto == 6 and (self.dport >= 10011 and self.dport <= 10013))
+         return (self.proto == 6 and self.dport == 10010)
 
     # == tuple matching
     def _matchTCP(self, parser):
@@ -115,14 +117,38 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.mac_to_port = {}
        
         # == flows ===========================================================
+        # Number of flow classes
+        self.NB_CLASSES = 1000
+
         # Last time the threshold has been recomputed
         self.last_update = 0.0
 
         # Interval between two threshold recomputations (in seconds, float)
-        self.T = 1.0
+        self.T = 60.0
 
-        # Number of flow classes
-        self.NB_CLASSES = 3
+        # Average load on the controller (c \in \left[0; 1\right])
+        self.c = 0.5
+        if "ryu_c" in os.environ:
+           self.c = float( os.environ["ryu_c"])
+        # are we using random instead of STOCHAPP?
+        self.random=False
+        if "ryu_random" in os.environ:
+           self.random = bool( int(os.environ["ryu_random"]))
+        # seed for the experiement
+        self.seed = 0
+        if "ryu_XP" in os.environ:
+           self.seed = int(os.environ["ryu_XP"])
+        seed(int(self.seed))
+
+        # Current alpha value
+        self.alpha = (self.NB_CLASSES / 2.0)
+        converged_alpha = {0.9:998.0, 0.7:998.0,0.5:991.0,0.3:946.0,0.1:650.0,0.01:113.0}
+        if self.c in converged_alpha:
+            self.alpha = converged_alpha[self.c]
+
+        # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
+        self.epsilon = 10.0
+
         # Statistics on the number of observations for flow classes
 	#     observations_classes[0] = total number of observations
         #     observations_classes[i>0] = number of observations for class i
@@ -140,25 +166,14 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.thresholds = list()
         self.thresholds.append(None)
         for i in range(1, self.NB_CLASSES + 1):
-            self.thresholds.append(0.0)
+            if i < self.alpha:
+                self.thresholds.append(1.0)
+            else:
+                self.thresholds.append(0.0)
 
-        # Average load on the controller (c \in \left[0; 1\right])
-        self.c = 0.5
-        if "ryu_c" in os.environ:
-           self.c = float( os.environ["ryu_c"])
-        self.random=False
-        if "ryu_random" in os.environ:
-           self.random = bool( int(os.environ["ryu_random"]))
-        self.seed = 0
-        if "ryu_XP" in os.environ:
-           self.seed = int(os.environ["ryu_XP"])
-        seed(int(self.seed))
+        if not self.random:
+            self.stochapp_thread = hub.spawn(self._continuous_STOCHAPP)
 
-        # Current alpha value
-        self.alpha = 1.5
-
-        # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
-        self.epsilon = 0.01
 
         # History of flow decisions
         self.flows = dict()
@@ -170,6 +185,13 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.monitor_thread = hub.spawn(self._monitor)
 
 
+        # == flow class predictor
+        self.predictor = dict()    # predictor[<source port>] = <flow class>
+        with open("flow.dat") as f:
+            for line in f:
+                line = line.strip()
+                (sport, s_class, size) = line.split()
+                self.predictor[int(sport)] = int(s_class)
         # ====================================================================
         # OVS1
         self.mac_to_port.setdefault(8796752236495, {})
@@ -193,7 +215,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.mac_to_port[8796750974788]["08:00:27:c2:f9:9a"] = 2 # hadoop1
         self.mac_to_port[8796750974788]["08:00:27:45:16:ee"] = 2 # hadoop2
         # ==============================
-        print "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random
+        print time(), "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random
+
+
+
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -207,14 +232,19 @@ class ExampleSwitch13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
-    def add_flow(self, datapath, priority, match, actions):
+    def add_flow(self, datapath, priority, match, actions, idle_timeout=None):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         # construct flow_mod message and send it.
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
                                              actions)]
-        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+
+        if idle_timeout:
+            mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst, idle_timeout=idle_timeout,flags=ofproto.OFPFF_SEND_FLOW_REM)
+        else:
+            mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
 
@@ -234,7 +264,7 @@ class ExampleSwitch13(app_manager.RyuApp):
         # IPv4?
         if ethertype == ether_types.ETH_TYPE_IP:
            ip_pkt = pkt.get_protocol(ipv4.ipv4)
-           flow = Flow(src = ip_pkt.src, dst = ip_pkt.dst, proto = ip_pkt.proto, in_port = in_port)
+           flow = Flow(src = ip_pkt.src, dst = ip_pkt.dst, proto = ip_pkt.proto, in_port = in_port, predictor=self.predictor)
  
            # TCP?
            if ip_pkt.proto == inet.IPPROTO_TCP:
@@ -291,10 +321,16 @@ class ExampleSwitch13(app_manager.RyuApp):
         else:
             return (random() < self.thresholds[flow.size_class()])
 
+
+    def _continuous_STOCHAPP(self):
+        """
+        Recomputation of the threshold when needed
+        """
+        while True:
+            self.STOCHAPP()
+            hub.sleep(self.T)
+
     def STOCHAPP(self):
-       """
-       Recomputation of the threshold when needed
-       """
        now = time()
 
        # no need to recompute
@@ -342,7 +378,7 @@ class ExampleSwitch13(app_manager.RyuApp):
        # Probabilistic accept threshold class
        self.thresholds[_threshold] = self.alpha - int(self.alpha)
 
-       print "c:",self.c, "epsilon", self.epsilon, "Y:", Y, "alpha:", self.alpha, "P_i:", [self.proba_size_class(i) for i in range(1, len(self.thresholds))], "u(alpha):",self.thresholds[1:]
+       print time(), "c:",self.c, "epsilon", self.epsilon, "Y:", Y, "alpha:", self.alpha, "threshold:", (_threshold, self.thresholds[_threshold]) #, "P_i:", [self.proba_size_class(i) for i in range(1, len(self.thresholds))]#, "u(alpha):",self.thresholds[1:]
 
        # reset everything
        self.last_update = time()
@@ -368,6 +404,8 @@ class ExampleSwitch13(app_manager.RyuApp):
             for dp in self.datapaths.values():
                 self._request_stats(dp)
             hub.sleep(self.sleep)
+            print time(), "ports speed", self.port_speed
+
 
 
     def _request_stats(self, datapath):
@@ -427,12 +465,41 @@ class ExampleSwitch13(app_manager.RyuApp):
                     pre, period)
     
 #                self._save_stats(self.port_speed, key, speed, state_len)
-#                print "speed of ", key, ":",speed
+#                print time(), "speed of ", key, ":",speed
                 self.port_speed[ev.msg.datapath.id][stat.port_no] = speed 
-        print self.port_speed
 
 # ========================
 
+
+    # == Flow_removed
+    @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
+    def _flow_removed_handler(self, ev):
+        msg = ev.msg
+        dp = msg.datapath
+        ofp = dp.ofproto
+
+        if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
+            reason = 'IDLE TIMEOUT'
+        elif msg.reason == ofp.OFPRR_HARD_TIMEOUT:
+            reason = 'HARD TIMEOUT'
+        elif msg.reason == ofp.OFPRR_DELETE:
+            reason = 'DELETE'
+        elif msg.reason == ofp.OFPRR_GROUP_DELETE:
+            reason = 'GROUP DELETE'
+        else:
+            reason = 'unknown'
+
+        self.logger.info('OFPFlowRemoved received: '
+                'cookie=%d priority=%d reason=%s table_id=%d '
+                'duration_sec=%d duration_nsec=%d '
+                'idle_timeout=%d hard_timeout=%d '
+                'packet_count=%d byte_count=%d match.fields=%s',
+                msg.cookie, msg.priority, reason, msg.table_id,
+                msg.duration_sec, msg.duration_nsec,
+                msg.idle_timeout, msg.hard_timeout,
+                msg.packet_count, msg.byte_count, msg.match)
+
+    # == Packet_in
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -464,86 +531,96 @@ class ExampleSwitch13(app_manager.RyuApp):
         # learn a mac address to avoid FLOOD next time.
         if src not in self.mac_to_port[dpid]:
             self.mac_to_port[dpid][src] = in_port
-            print "MAC", src, "learned on ", dpid, " - " ,in_port
+            print time(), "MAC", src, "learned on ", dpid, " - " ,in_port
             assert(False)
 
-        # == Flow analysis ===================================================
-        # extract flow info
-        flow = self._get_flow_info(pkt, in_port)
-        if flow in self.flows:
-           if self.flows[flow] >= (time() - 3.0):
-               print "ignore burst of packet_in for one flow"
-               return
-
-           self.flows[flow] = time()
-
-        optimize_flow = True    # Shall we optimize the flow?
-
-        vdpid = dpid
-        # determine if a best effort flow can be optimized
-        if flow and flow.is_best_effort():
-           (a,r) = self.S.setdefault(vdpid, (0,0))
-
-           # worth installing?
-           if self.accept(flow):
-              optimize_flow = True
-              a = a + 1
-           else:
-              optimize_flow = False
-              r = r + 1
-
-           # STOCHAPP
-           if not self.random:
-              # keep track of statistics for the flow
-              self.update_statistics(flow)
-              self.S[vdpid] = (a,r)
-
-              # recompute thresholds
-              self.STOCHAPP()
 
         # == Output port =====================================================
-
         # if the destination mac address is already learned,
         # decide which port to output the packet, otherwise FLOOD.
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
-
-            if out_port == 2:
-                print dpid, "optimize flow ", flow, ": ", optimize_flow
-
-                # force big best effort flows on 1
-                if flow and flow.is_best_effort() and optimize_flow:
-                    out_port = 1
-                    print dpid, "force ", flow, " on 1", out_port
-                # load balance between 1 and 2 for other traffic
-                else:
-                    # load balance flows on link 1 and link 2
-                    # quick dirty hack
-
-                    # get the current bw of the link
-                    speed1 = 0.0
-                    speed2 = 0.0
-                    if dpid in self.port_speed:
-                        if 1 in self.port_speed[dpid]:
-                            speed1 = float(self.port_speed[dpid][1])
-                        if 2 in self.port_speed[dpid]:
-                            speed2 = float(self.port_speed[dpid][2])
-
-                    # load preferably the least used link
-                    if speed1 == 0.0 and speed2 == 0.0:
-                       fraction = 0.5
-                    else:
-                      fraction = 1.0 - (speed1 / (speed1 + speed2))
-                    fraction = max(0.1, min(fraction, 0.9))
-                    if random() < fraction:
-                        out_port = 1
-                    else:
-                        out_port = 2
-                    print dpid, "load balance ", flow, " on ", out_port, " (",fraction,")"
         else:
-            print "PAS ICI", dst
+            print time(), "Flooding not supported", dst
             out_port = ofproto.OFPP_FLOOD
-            return 
+            assert(False)
+
+
+        # recompute thresholds
+#        if not self.random:
+#            self.STOCHAPP()
+
+        # extract flow info
+        flow = self._get_flow_info(pkt, in_port)
+
+        optimize_flow = False
+        # == Flow analysis to check for optimality ===================================================
+        ########### ONLY for packets to the core ===========================
+        if flow and (in_port != 1 and in_port != 2):
+            print time(), "flow", flow ," from the edge on ", dpid 
+
+            # ignore burst of packet_in for a flow
+            if flow in self.flows:
+               if self.flows[flow] >= (time() - 3.0):
+                   print time(), "ignore burst of packet_in for one flow"
+                   return
+               self.flows[flow] = time()
+
+            # Shall we optimize?
+            # always optimize non best effort traffic
+            optimize_flow = True    # Shall we optimize the flow?
+
+            # determine if a best effort flow can be optimized
+            if flow.is_best_effort():
+               (a,r) = (0,0)
+               if dpid in self.S:
+                   (a,r) = self.S[dpid]
+
+               # worth installing?
+               if self.accept(flow):
+                  optimize_flow = True
+                  a = a + 1
+               else:
+                  optimize_flow = False
+                  r = r + 1
+
+               # keep track of statistics on flows and acceptances/rejections
+               self.update_statistics(flow)
+               self.S[dpid] = (a,r)
+
+            ###### OUTPUT PORT
+#DSA#            out_port = self.mac_to_port[dpid][dst]
+            if out_port == 2:
+                print time(), " ",dpid, "optimize flow ", flow, ": ", optimize_flow
+                # force big best effort flows on 1
+                if flow.is_best_effort() and optimize_flow:
+                    out_port = 1
+                    print time(), " ", dpid, "force ", flow, " on 1", out_port
+                # load balance between 1 and 2 for other traffic
+#DSA#                else:
+#DSA#                    # load balance flows on link 1 and link 2
+#DSA#                    # quick dirty hack
+#DSA#    
+#DSA#                    # get the current bw of the link
+#DSA#                    speed1 = 0.0
+#DSA#                    speed2 = 0.0
+#DSA#                    if dpid in self.port_speed:
+#DSA#                        if 1 in self.port_speed[dpid]:
+#DSA#                            speed1 = float(self.port_speed[dpid][1])
+#DSA#                        if 2 in self.port_speed[dpid]:
+#DSA#                            speed2 = float(self.port_speed[dpid][2])
+#DSA#    
+#DSA#                    # load preferably the least used link
+#DSA#                    if speed1 == 0.0 and speed2 == 0.0:
+#DSA#                       fraction = 0.5
+#DSA#                    else:
+#DSA#                      fraction = 1.0 - (speed1 / (speed1 + speed2))
+#DSA#                    fraction = max(0.1, min(fraction, 0.9))
+#DSA#                    if random() < fraction:
+#DSA#                        out_port = 1
+#DSA#                    else:
+#DSA#                        out_port = 2
+#DSA#                    print time(), " ",dpid, "load balance ", flow, " on ", out_port, " (",fraction,")"           
 
         # construct action list.
         actions = [parser.OFPActionOutput(out_port)]
@@ -552,7 +629,10 @@ class ExampleSwitch13(app_manager.RyuApp):
         if out_port != ofproto.OFPP_FLOOD:
             if flow:
                 match = flow.match(parser)
-                self.add_flow(datapath, 42, match, actions)
+                prio = 42
+                if optimize_flow:
+                    prio = 69
+                self.add_flow(datapath, prio, match, actions, idle_timeout=180)
 
         # construct packet_out message and send it.
         out = parser.OFPPacketOut(datapath=datapath,

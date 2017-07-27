@@ -32,7 +32,7 @@ for line in sys.stdin:
 
     # == Normal Map reduce ===
     # start
-    if line.find("INFO client.RMProxy: Connecting to ResourceManager") != -1:
+    if line.find(" running in uber mode : false") != -1:
         d = get_time(line)
         start = float(to_unix(d))
     # stop

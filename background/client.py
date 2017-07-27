@@ -1,18 +1,12 @@
 from multiprocessing import Pool
 import time
 import os
-
 import socket
 import sys
-
 import numpy as np
-
-
 # ===================================
-
 def send_flow(sport, size, s_class):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     dport = 10010
     BUFSIZE = 1024
 
@@ -33,24 +27,20 @@ def send_flow(sport, size, s_class):
         print e
     finally:
         sock.close()
-
     return True
 
 _seed=int(sys.argv[1])
 np.random.seed(_seed)
 
-nb_classes = 3
-
 print "seed:", _seed
 
-pool = Pool(processes=100)
-rate = 3
+pool = Pool(processes=500)
+rate = 20
 
 def chunks(total):
     BUFF_SIZE = 1024
     while total > 0:
         c = min(1024, total)
-        print c
         total = total - c
 
 
@@ -59,7 +49,7 @@ with open("flow.dat") as f:
         line = line.strip()
         (sport, size_class, size) = line.split()
         sport = int(sport)
-        size_class = int(size_class)
+        size_class = min(int(size_class), 1*1024*1024*1024)
         size = int (size)
         res = pool.apply_async(send_flow, (sport, size, size_class,))
 

@@ -87,7 +87,7 @@ if __name__ == "__main__":
 	server = SocketServer.TCPServer(address, MyTCPHandler)
 	socket_queue = multiprocessing.Queue()
 
- 	for i in range(10):
+ 	for i in range(500):
 		worker = MultiprocessWorker(socket_queue)
 		worker.start()
 

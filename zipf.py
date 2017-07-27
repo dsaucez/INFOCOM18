@@ -4,7 +4,7 @@ import scipy.stats as stats
 import matplotlib.pyplot as plt
 
 N = 1000            # number of classes
-a = 1.1             # Zipfs parameter
+a = 0.8             # Zipfs parameter
 MIN_PORT = 2000     # minimum source port
 
 

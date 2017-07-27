@@ -46,6 +46,7 @@ xps = [d for d in listdir(datapath) if isdir(join(datapath, d))]
 
 a = np.empty(shape=[0,6])
 noise = dict()
+load = dict()
 
 # get all runs for each experiment
 for xp in xps:
@@ -53,7 +54,7 @@ for xp in xps:
 
     # completion time
     data = dict()
-    completion_time_file = join(datapath, xp, "completion_time.log")
+    completion_time_file = join(datapath, xp, "completion_time.dat")
     with open(completion_time_file) as f:
         for line in f:
             line = line.strip()
@@ -80,14 +81,32 @@ for xp in xps:
             noise[c][r]["mean"] = mean
             noise[c][r]["high"] = high-mean
 
+    print "noise:"
     print noise
 
+    # load
+    load_file = join(datapath, xp, "max_load.dat")
+    with open(load_file) as f:
+        for line in f:
+            line = line.strip()
+            (low,mean,high) = (float(v) for v in line.split())
+            _c = load.setdefault(c, dict())
+            _r = _c.setdefault(r, dict())
+            load[c][r]["low"]  = mean-low
+            load[c][r]["mean"] = mean
+            load[c][r]["high"] = high-mean
+    print "load:"
+    print load
+
+
 x = [0.01, 0.1, 0.3, 0.7, 0.9]
+x = [0.3, 0.7, 0.9]
 
 titles=["put", "wordcount", "teragen", "terasort"]
 
 print a
 
+# plot completion time
 for bench in range(1,5):
     plt.cla()
     print bench
@@ -103,7 +122,7 @@ for bench in range(1,5):
 
     y = stochapp_bench_a[:,4]
     yerr = stochapp_bench_a[:,5]
-    plt.errorbar(x,y, yerr=yerr, label='STOCHAPP')
+    plt.errorbar(x,y, yerr=yerr, label='SOFIA')
 
     y = rand_bench_a[:,4]
     yerr = rand_bench_a[:,5]
@@ -111,6 +130,7 @@ for bench in range(1,5):
     
     axes = plt.gca()
     axes.set_xlim([0.009,1])
+    plt.ylim(ymin=0.0)
 
     plt.xscale('log')
     plt.xlabel('c')
@@ -118,10 +138,11 @@ for bench in range(1,5):
 
     plt.legend(loc=3)
     plt.title(titles[bench-1])
-    plt.savefig("figs/completion_time/%s.eps" % (titles[bench-1]))
+    plt.savefig("figs/completion_time/completion_time_%s.eps" % (titles[bench-1]))
 
 
 
+# plot noise
 y = list()
 yerr = list()
 
@@ -136,9 +157,10 @@ for c in noise.keys():
     yerr_rand.append(noise[c][1]["low"])
 
 plt.cla()
-plt.errorbar(x, y, yerr=yerr, label='STOCHAPP')
+plt.errorbar(x, y, yerr=yerr, label='SOFIA')
 axes = plt.gca()
 axes.set_xlim([0.009,1])
+plt.ylim(ymin=0.0)
 
 
 plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
@@ -148,6 +170,38 @@ plt.xlabel('c')
 plt.ylabel('background traffic [Mbps]')
 plt.legend(loc=3)
 
-plt.savefig("figs/noise/background_bandwith.eps")
+plt.savefig("figs/noise/background_bandwidth.eps")
+
+
+# plot load
+y = list()
+yerr = list()
+
+y_rand = list()
+yerr_rand = list()
+
+for c in load.keys():
+    y.append(load[c][0]["mean"])
+    yerr.append(load[c][0]["low"])
+
+    y_rand.append(load[c][1]["mean"])
+    yerr_rand.append(load[c][1]["low"])
+
+plt.cla()
+plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+axes = plt.gca()
+axes.set_xlim([0.009,1])
+plt.ylim(ymin=0.0)
+
+plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+plt.xscale('log')
+plt.xlabel('c')
+plt.ylabel('optimized volume [bytes]')
+#plt.ylabel('maximum load [packet_in / sec]')
+plt.legend(loc=3)
+
+plt.savefig("figs/load/optimized_volume.eps")
+#plt.savefig("figs/load/max_load.eps")
 
 
