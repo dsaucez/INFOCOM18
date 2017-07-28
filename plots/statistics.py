@@ -45,6 +45,7 @@ xps = [d for d in listdir(datapath) if isdir(join(datapath, d))]
 
 
 a = np.empty(shape=[0,6])
+fraction = dict()
 noise = dict()
 load = dict()
 
@@ -69,47 +70,70 @@ for xp in xps:
         (low, mean, high) = conf_interval(v, 0.95)
         a = np.vstack((a, np.array([bench, c, r, low, mean, high])))
 
-    # noise
-    noise_file = join(datapath, xp, "noise.dat")
-    with open(noise_file) as f:
-        for line in f:
-            line = line.strip()
-            (low,mean,high) = (float(v) for v in line.split())
-            _c = noise.setdefault(c, dict())
-            _r = _c.setdefault(r, dict())
-            noise[c][r]["low"]  = mean-low
-            noise[c][r]["mean"] = mean
-            noise[c][r]["high"] = high-mean
 
-    print "noise:"
-    print noise
+    if True:
+        # fraction
+        fraction_file = join(datapath, xp, "optimized_fraction.dat")
+        with open(fraction_file) as f:
+            for line in f:
+                line = line.strip()
+                (low,mean,high) = (float(v) for v in line.split())
+                _c = fraction.setdefault(c, dict())
+                _r = _c.setdefault(r, dict())
+                fraction[c][r]["low"]  = mean-low
+                fraction[c][r]["mean"] = mean
+                fraction[c][r]["high"] = high-mean
 
-    # load
-    load_file = join(datapath, xp, "max_load.dat")
-    with open(load_file) as f:
-        for line in f:
-            line = line.strip()
-            (low,mean,high) = (float(v) for v in line.split())
-            _c = load.setdefault(c, dict())
-            _r = _c.setdefault(r, dict())
-            load[c][r]["low"]  = mean-low
-            load[c][r]["mean"] = mean
-            load[c][r]["high"] = high-mean
-    print "load:"
-    print load
+        print "fraction:"
+        print fraction
+
+
+
+    if False:
+        # noise
+        noise_file = join(datapath, xp, "noise.dat")
+        with open(noise_file) as f:
+            for line in f:
+                line = line.strip()
+                (low,mean,high) = (float(v) for v in line.split())
+                _c = noise.setdefault(c, dict())
+                _r = _c.setdefault(r, dict())
+                noise[c][r]["low"]  = mean-low
+                noise[c][r]["mean"] = mean
+                noise[c][r]["high"] = high-mean
+
+        print "noise:"
+        print noise
+
+    if False:
+        # load
+        load_file = join(datapath, xp, "max_load.dat")
+        with open(load_file) as f:
+            for line in f:
+                line = line.strip()
+                (low,mean,high) = (float(v) for v in line.split())
+                _c = load.setdefault(c, dict())
+                _r = _c.setdefault(r, dict())
+                load[c][r]["low"]  = mean-low
+                load[c][r]["mean"] = mean
+                load[c][r]["high"] = high-mean
+        print "load:"
+        print load
 
 
 x = [0.01, 0.1, 0.3, 0.7, 0.9]
-x = [0.3, 0.7, 0.9]
+x = [0.3, 0.7]
 
 titles=["put", "wordcount", "teragen", "terasort"]
+titles=["wordcount"]
 
 print a
 
 # plot completion time
-for bench in range(1,5):
+for bench in range(1,2): #5):
     plt.cla()
-    print bench
+    print "\t\t!!!!",bench
+
     b = a[:,0]
     condition = b == bench
     bench_a = a[condition]
@@ -129,79 +153,124 @@ for bench in range(1,5):
     plt.errorbar(x,y, yerr=yerr, label='random')
     
     axes = plt.gca()
-    axes.set_xlim([0.009,1])
+    axes.set_xlim([0,1])
     plt.ylim(ymin=0.0)
 
-    plt.xscale('log')
+###    plt.xscale('log')
     plt.xlabel('c')
     plt.ylabel('completion time [s]')
 
     plt.legend(loc=3)
-    plt.title(titles[bench-1])
+###    plt.title(titles[bench-1])
     plt.savefig("figs/completion_time/completion_time_%s.eps" % (titles[bench-1]))
 
 
+if True:
+    # plot fraction
 
-# plot noise
-y = list()
-yerr = list()
+    x = list()
+    
+    y = list()
+    yerr = list()
 
-y_rand = list()
-yerr_rand = list()
+    y_rand = list()
+    yerr_rand = list()
 
-for c in noise.keys():
-    y.append(noise[c][0]["mean"])
-    yerr.append(noise[c][0]["low"])
+    for c in fraction.keys():
+        x.append(c)
+        y.append(fraction[c][0]["mean"])
+        yerr.append(fraction[c][0]["low"])
 
-    y_rand.append(noise[c][1]["mean"])
-    yerr_rand.append(noise[c][1]["low"])
+        y_rand.append(fraction[c][1]["mean"])
+        yerr_rand.append(fraction[c][1]["low"])
 
-plt.cla()
-plt.errorbar(x, y, yerr=yerr, label='SOFIA')
-axes = plt.gca()
-axes.set_xlim([0.009,1])
-plt.ylim(ymin=0.0)
-
-
-plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
-
-plt.xscale('log')
-plt.xlabel('c')
-plt.ylabel('background traffic [Mbps]')
-plt.legend(loc=3)
-
-plt.savefig("figs/noise/background_bandwidth.eps")
+    plt.cla()
+    plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+    axes = plt.gca()
+    axes.set_xlim([0,1])
+    plt.ylim(ymin=0.0)
 
 
-# plot load
-y = list()
-yerr = list()
+    plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
 
-y_rand = list()
-yerr_rand = list()
+#    plt.xscale('log')
+    plt.xlabel('c')
+    plt.ylabel('Fraction of traffic')
+    plt.legend(loc=3)
 
-for c in load.keys():
-    y.append(load[c][0]["mean"])
-    yerr.append(load[c][0]["low"])
+    plt.savefig("figs/noise/optimized_volume.eps")
 
-    y_rand.append(load[c][1]["mean"])
-    yerr_rand.append(load[c][1]["low"])
 
-plt.cla()
-plt.errorbar(x, y, yerr=yerr, label='SOFIA')
-axes = plt.gca()
-axes.set_xlim([0.009,1])
-plt.ylim(ymin=0.0)
 
-plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+if False:
+    # plot noise
+    x = list()
 
-plt.xscale('log')
-plt.xlabel('c')
-plt.ylabel('optimized volume [bytes]')
-#plt.ylabel('maximum load [packet_in / sec]')
-plt.legend(loc=3)
+    y = list()
+    yerr = list()
 
-plt.savefig("figs/load/optimized_volume.eps")
-#plt.savefig("figs/load/max_load.eps")
+    y_rand = list()
+    yerr_rand = list()
+
+    for c in noise.keys():
+        x.append(c)
+        y.append(noise[c][0]["mean"])
+        yerr.append(noise[c][0]["low"])
+
+        y_rand.append(noise[c][1]["mean"])
+        yerr_rand.append(noise[c][1]["low"])
+
+    plt.cla()
+    plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+    axes = plt.gca()
+    axes.set_xlim([0,1])
+    plt.ylim(ymin=0.0)
+
+
+    plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+#    plt.xscale('log')
+    plt.xlabel('c')
+    plt.ylabel('background traffic [Mbps]')
+    plt.legend(loc=3)
+
+    plt.savefig("figs/noise/background_bandwidth.eps")
+
+
+if False:
+    # plot load
+    
+    x = list()
+
+    y = list()
+    yerr = list()
+
+    y_rand = list()
+    yerr_rand = list()
+    for c in load.keys():
+        x.append(c)
+
+        y.append(load[c][0]["mean"])
+        yerr.append(load[c][0]["low"])
+
+        y_rand.append(load[c][1]["mean"])
+        yerr_rand.append(load[c][1]["low"])
+
+    plt.cla()
+    plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+    axes = plt.gca()
+    axes.set_xlim([0,1])
+    plt.ylim(ymin=0.0)
+
+    plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+    plt.xscale('log')
+    plt.xlabel('c')
+    plt.ylabel('optimized volume [bytes]')
+    #plt.ylabel('maximum load [packet_in / sec]')
+    plt.legend(loc=3)
+
+    plt.savefig("figs/load/optimized_volume.eps")
+    #plt.savefig("figs/load/max_load.eps")
 
 
