@@ -142,7 +142,8 @@ class ExampleSwitch13(app_manager.RyuApp):
 
         # Current alpha value
         self.alpha = (self.NB_CLASSES / 2.0)
-        converged_alpha = {0.9:998.0, 0.7:998.0,0.5:991.0,0.3:946.0,0.1:650.0,0.01:113.0}
+##        converged_alpha = {0.9:998.0, 0.7:998.0,0.5:991.0, 0.3:946.0,0.1:650.0,0.01:113.0} # 1.1
+        converged_alpha = {0.9:998.0, 0.7:982.0, 0.5:915.0, 0.3:742.0, 0.1:347.0, 0.01:41.0} # 0.8
         if self.c in converged_alpha:
             self.alpha = converged_alpha[self.c]
 

@@ -46,6 +46,8 @@ xps = [d for d in listdir(datapath) if isdir(join(datapath, d))]
 
 a = np.empty(shape=[0,6])
 fraction = dict()
+volume_fraction = dict()
+maximum_controller_load = dict()
 noise = dict()
 load = dict()
 
@@ -72,8 +74,8 @@ for xp in xps:
 
 
     if True:
-        # fraction
-        fraction_file = join(datapath, xp, "optimized_fraction.dat")
+        # fraction of flows
+        fraction_file = join(datapath, xp, "flow_background_fraction.dat")
         with open(fraction_file) as f:
             for line in f:
                 line = line.strip()
@@ -86,6 +88,40 @@ for xp in xps:
 
         print "fraction:"
         print fraction
+
+    if True:
+        # volume_fraction of flows
+        volume_fraction_file = join(datapath, xp, "flow_background_volume_fraction.dat")
+        with open(volume_fraction_file) as f:
+            for line in f:
+                line = line.strip()
+                (low,mean,high) = (float(v) for v in line.split())
+                _c = volume_fraction.setdefault(c, dict())
+                _r = _c.setdefault(r, dict())
+                volume_fraction[c][r]["low"]  = mean-low
+                volume_fraction[c][r]["mean"] = mean
+                volume_fraction[c][r]["high"] = high-mean
+
+        print "volume_fraction:"
+        print volume_fraction
+
+    if True:
+        # maximum_controller_load of flows
+        maximum_controller_load_file = join(datapath, xp, "maximum_controller_load.dat")
+        with open(maximum_controller_load_file) as f:
+            for line in f:
+                line = line.strip()
+                (low,mean,high) = (float(v) for v in line.split())
+                _c = maximum_controller_load.setdefault(c, dict())
+                _r = _c.setdefault(r, dict())
+                maximum_controller_load[c][r]["low"]  = mean-low
+                maximum_controller_load[c][r]["mean"] = mean
+                maximum_controller_load[c][r]["high"] = high-mean
+
+        print "maximum_controller_load:"
+        print maximum_controller_load
+
+
 
 
 
@@ -122,7 +158,7 @@ for xp in xps:
 
 
 x = [0.01, 0.1, 0.3, 0.7, 0.9]
-x = [0.3, 0.7]
+x = [0.1, 0.3, 0.7, 0.9]
 
 titles=["put", "wordcount", "teragen", "terasort"]
 titles=["wordcount"]
@@ -176,7 +212,7 @@ if True:
     y_rand = list()
     yerr_rand = list()
 
-    for c in fraction.keys():
+    for c in sorted(fraction.keys()):
         x.append(c)
         y.append(fraction[c][0]["mean"])
         yerr.append(fraction[c][0]["low"])
@@ -193,12 +229,82 @@ if True:
 
     plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
 
-#    plt.xscale('log')
     plt.xlabel('c')
-    plt.ylabel('Fraction of traffic')
-    plt.legend(loc=3)
+    plt.ylabel('Fraction of flows')
+    plt.legend(loc=4)
 
-    plt.savefig("figs/noise/optimized_volume.eps")
+    plt.savefig("figs/noise/optimized_fraction_flows.eps")
+
+if True:
+    # plot volume_fraction
+
+    x = list()
+    
+    y = list()
+    yerr = list()
+
+    y_rand = list()
+    yerr_rand = list()
+
+    for c in sorted(volume_fraction.keys()):
+        x.append(c)
+        y.append(volume_fraction[c][0]["mean"])
+        yerr.append(volume_fraction[c][0]["low"])
+
+        y_rand.append(volume_fraction[c][1]["mean"])
+        yerr_rand.append(volume_fraction[c][1]["low"])
+
+    plt.cla()
+    plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+    axes = plt.gca()
+    axes.set_xlim([0,1])
+    plt.ylim(ymin=0.0)
+
+
+    plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+    plt.xlabel('c')
+    plt.ylabel('Fraction of traffic volume')
+    plt.legend(loc=4)
+
+    plt.savefig("figs/noise/optimized_volume_fraction_flows.eps")
+
+if True:
+    # plot maximum_controller_load
+
+    x = list()
+    
+    y = list()
+    yerr = list()
+
+    y_rand = list()
+    yerr_rand = list()
+
+    for c in sorted(maximum_controller_load.keys()):
+        x.append(c)
+        y.append(maximum_controller_load[c][0]["mean"])
+        yerr.append(maximum_controller_load[c][0]["low"])
+
+        y_rand.append(maximum_controller_load[c][1]["mean"])
+        yerr_rand.append(maximum_controller_load[c][1]["low"])
+
+    plt.cla()
+    plt.errorbar(x, y, yerr=yerr, label='SOFIA')
+    axes = plt.gca()
+    axes.set_xlim([0,1])
+    plt.ylim(ymin=0.0)
+
+
+    plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+    plt.xlabel('c')
+    plt.ylabel('Maximum controller load [packet_in/sec]')
+    plt.legend(loc=4)
+
+    plt.savefig("figs/load/optimized_maximum_controller_load.eps")
+
+
+
 
 
 
