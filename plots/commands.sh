@@ -11,7 +11,8 @@ do
     do
       dir="data/$e/$f"
 #      cat $dir/wordcount.log $dir/terasort.log |./completion_time.py
-      cat $dir/wordcount.log |./completion_time.py
+       cat $dir/terasort.log | ./completion_time.py
+#      cat $dir/wordcount.log | ./completion_time.py
     done > /tmp/completion_time.dat
     mv /tmp/completion_time.dat data/$e/completion_time.dat
 done
