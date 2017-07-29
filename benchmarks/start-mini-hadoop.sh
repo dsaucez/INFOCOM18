@@ -72,11 +72,11 @@ echo "done"
 ###############################################################
 
 
-for XP in 1 2 3 4 5 6 7 8 9 10 #11 12 13 14 15
+for XP in 1 2 3 # 4 5 6 7 8 9 10 #11 12 13 14 15
 do
-    for ryu_c in 0.3 0.7 0.1 0.9
+    for ryu_c in 0.3 #0.7 0.1 0.9
     do
-        for ryu_random in 0 1
+        for ryu_random in 2 # 0 1 2
         do
             d=`date +'%Y%m%d_%H%M%S.%N'`
             LOG_DIR=logs/c_${ryu_c}__random_${ryu_random}/$d

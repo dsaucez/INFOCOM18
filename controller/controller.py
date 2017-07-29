@@ -132,8 +132,10 @@ class ExampleSwitch13(app_manager.RyuApp):
            self.c = float( os.environ["ryu_c"])
         # are we using random instead of STOCHAPP?
         self.random=False
+        self.random_strategy = 0
         if "ryu_random" in os.environ:
-           self.random = bool( int(os.environ["ryu_random"]))
+           self.random_strategy = int(os.environ["ryu_random"])
+           self.random = bool( self.random_strategy)
         # seed for the experiement
         self.seed = 0
         if "ryu_XP" in os.environ:
@@ -142,10 +144,10 @@ class ExampleSwitch13(app_manager.RyuApp):
 
         # Current alpha value
         self.alpha = (self.NB_CLASSES / 2.0)
-##        converged_alpha = {0.9:998.0, 0.7:998.0,0.5:991.0, 0.3:946.0,0.1:650.0,0.01:113.0} # 1.1
-        converged_alpha = {0.9:998.0, 0.7:982.0, 0.5:915.0, 0.3:742.0, 0.1:347.0, 0.01:41.0} # 0.8
-        if self.c in converged_alpha:
-            self.alpha = converged_alpha[self.c]
+##        self.converged_alpha = {0.9:998.0, 0.7:998.0,0.5:991.0, 0.3:946.0,0.1:650.0,0.01:113.0} # 1.1
+        self.converged_alpha = {0.9:998.0, 0.7:982.0, 0.5:915.0, 0.3:742.0, 0.1:347.0, 0.01:41.0} # 0.8
+        if self.c in self.converged_alpha:
+            self.alpha = self.converged_alpha[self.c]
 
         # STOCHAPP Convergence parameter (epsilon \in \left[0; 1\right])
         self.epsilon = 10.0
@@ -216,7 +218,7 @@ class ExampleSwitch13(app_manager.RyuApp):
         self.mac_to_port[8796750974788]["08:00:27:c2:f9:9a"] = 2 # hadoop1
         self.mac_to_port[8796750974788]["08:00:27:45:16:ee"] = 2 # hadoop2
         # ==============================
-        print time(), "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random
+        print time(), "c:", self.c, "seed:", self.seed, "epsilon:", self.epsilon, "#classes:", self.NB_CLASSES, "random:", self.random, "random_strategy:", self.random_strategy
 
 
 
@@ -318,7 +320,12 @@ class ExampleSwitch13(app_manager.RyuApp):
 	Define wether or not we should accept the flow for optimal routing
         """
         if self.random:
-            return (random() < self.c)
+            if self.random_strategy == 1:
+                return (random() < self.c)
+            if self.random_strategy == 2:
+                cl = flow.size_class()
+                th = self.converged_alpha[self.c]
+                return cl < th
         else:
             return (random() < self.thresholds[flow.size_class()])
 

@@ -161,7 +161,7 @@ x = [0.01, 0.1, 0.3, 0.7, 0.9]
 x = [0.1, 0.3, 0.7, 0.9]
 
 titles=["put", "wordcount", "teragen", "terasort"]
-titles=["wordcount"]
+titles=["terasort"]
 
 print a
 
@@ -262,6 +262,11 @@ if True:
 
 
     plt.errorbar(x, y_rand, yerr=yerr_rand, label='random')
+
+    xopt = [0.1, 0.3, 0.7, 0.9]
+    yopt = [0.60, 0.95, 0.9999, 0.999997]
+
+    plt.plot(xopt, yopt, label='optimal')
 
     plt.xlabel('c')
     plt.ylabel('Fraction of traffic volume')
